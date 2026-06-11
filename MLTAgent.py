@@ -23,13 +23,14 @@ for key, default in {
     "tool_calls_made": 0,
     "denied_calls": 0,
     "approval_mode": True,
-    "keys_saved": False,
-    "mistral_key": "",
-    "weather_key": "",
-    "tavily_key": "",
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
+
+# ── LOAD API KEYS FROM STREAMLIT SECRETS ──
+MISTRAL_KEY = st.secrets["MISTRAL_API_KEY"]
+WEATHER_KEY = st.secrets["OPENWEATHER_API_KEY"]
+TAVILY_KEY  = st.secrets["TAVILY_API_KEY"]
 
 # ──────────────────────────────────────────────────────────────
 #  FULL CSS — Cyberpunk Neon City theme
@@ -672,47 +673,7 @@ st.markdown("""
 <div class='neon-divider'></div>
 """, unsafe_allow_html=True)
 
-# ── API KEY PANEL ────────────────────────────────────────────
-keys_ok = bool(
-    st.session_state.mistral_key and
-    st.session_state.weather_key and
-    st.session_state.tavily_key
-)
-
-with st.expander("🔑  API Keys — click to configure", expanded=not keys_ok):
-    st.markdown("<div class='api-panel-title'>▸ Enter your API keys below</div>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        mk = st.text_input("Mistral", placeholder="Mistral API key...", type="password",
-                           value=st.session_state.mistral_key, key="mk_input")
-    with c2:
-        wk = st.text_input("OpenWeather", placeholder="OpenWeather API key...", type="password",
-                           value=st.session_state.weather_key, key="wk_input")
-    with c3:
-        tk = st.text_input("Tavily", placeholder="Tavily API key...", type="password",
-                           value=st.session_state.tavily_key, key="tk_input")
-
-    sc1, sc2, _ = st.columns([1, 1, 4])
-    with sc1:
-        st.markdown('<div class="approve-wrap">', unsafe_allow_html=True)
-        if st.button("Save Keys", use_container_width=True):
-            st.session_state.mistral_key = mk
-            st.session_state.weather_key = wk
-            st.session_state.tavily_key  = tk
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-    with sc2:
-        status_class = "status-ok" if (mk and wk and tk) else "status-err"
-        status_text  = "● ALL CONNECTED" if (mk and wk and tk) else "● KEYS MISSING"
-        st.markdown(f"<div class='status-pill {status_class}' style='margin-top:6px'>{status_text}</div>",
-                    unsafe_allow_html=True)
-
-# refresh keys_ok after save
-keys_ok = bool(
-    st.session_state.mistral_key and
-    st.session_state.weather_key and
-    st.session_state.tavily_key
-)
+# ── API KEYS LOADED FROM STREAMLIT SECRETS (no manual entry needed) ──
 
 # ── STATS + CONTROLS ROW ────────────────────────────────────
 r1, r2, r3, r4, r5 = st.columns([1, 1, 1, 1, 2])
@@ -769,11 +730,11 @@ if st.session_state.pending_tool is not None:
         if st.button("✅ Approve", key="approve_btn", use_container_width=True):
             city = pt["args"].get("city", "")
             if pt["name"] == "get_weather":
-                tool_result = get_weather_data(city, st.session_state.weather_key)
+                tool_result = get_weather_data(city, WEATHER_KEY)
             else:
-                tool_result = get_news_data(city, st.session_state.tavily_key)
+                tool_result = get_news_data(city, TAVILY_KEY)
             st.session_state.tool_calls_made += 1
-            final = agent_with_result(pt["messages"], pt["call_id"], tool_result, st.session_state.mistral_key)
+            final = agent_with_result(pt["messages"], pt["call_id"], tool_result, MISTRAL_KEY)
             st.session_state.chat_history.append({"role": "tool",      "content": f"Tool [{pt['name']}] executed for city: {city}"})
             st.session_state.chat_history.append({"role": "assistant", "content": final})
             st.session_state.pending_tool = None
@@ -825,15 +786,13 @@ with st.expander("💡  Example prompts"):
 if send and user_input.strip():
     if not IMPORTS_OK:
         st.error(f"Missing dependency: {IMPORT_ERROR}. Run: pip install langchain langchain-mistralai langchain-community")
-    elif not keys_ok:
-        st.error("Please save all 3 API keys in the panel above before sending.")
     else:
         st.session_state.chat_history.append({"role": "user", "content": user_input.strip()})
         st.session_state.total_queries += 1
 
         with st.spinner("Thinking..."):
             try:
-                result = agent_first_step(user_input.strip(), st.session_state.mistral_key)
+                result = agent_first_step(user_input.strip(), MISTRAL_KEY)
             except Exception as e:
                 result = {"type": "final", "content": f"Agent error: {e}"}
 
@@ -848,12 +807,12 @@ if send and user_input.strip():
             else:
                 city = result["args"].get("city", "")
                 if result["name"] == "get_weather":
-                    tool_result = get_weather_data(city, st.session_state.weather_key)
+                    tool_result = get_weather_data(city, WEATHER_KEY)
                 else:
-                    tool_result = get_news_data(city, st.session_state.tavily_key)
+                    tool_result = get_news_data(city, TAVILY_KEY)
                 st.session_state.tool_calls_made += 1
                 try:
-                    final = agent_with_result(result["messages"], result["call_id"], tool_result, st.session_state.mistral_key)
+                    final = agent_with_result(result["messages"], result["call_id"], tool_result, MISTRAL_KEY)
                 except Exception as e:
                     final = f"Error generating response: {e}"
                 st.session_state.chat_history.append({"role": "tool",      "content": f"Tool [{result['name']}] → city: {city}"})
