@@ -598,21 +598,130 @@ def make_llm(key: str):
     return ChatMistralAI(model="mistral-small-2506", api_key=key)
 
 
-def agent_first_step(user_msg: str, mistral_key: str):
-    llm = make_llm(mistral_key).bind_tools(TOOLS_SCHEMA)
+def execute_tool(name: str, args: dict) -> str:
+    """Run a single tool and return its string result."""
+    city = args.get("city", "")
+    if name == "get_weather":
+        return get_weather_data(city, WEATHER_KEY)
+    elif name == "get_news":
+        return get_news_data(city, TAVILY_KEY)
+    return f"Unknown tool: {name}"
+
+
+def run_full_agent(user_msg: str, approval_mode: bool):
+    """
+    Run the full agentic loop:
+    - In auto mode  : execute all tool calls automatically, return final answer.
+    - In approval mode: return the FIRST pending tool for human approval,
+      storing remaining tool calls in session state.
+    Returns dict with key 'type':
+      "final"        -> {"type":"final", "content": str, "tool_log": [...]}
+      "needs_approval" -> {"type":"needs_approval", "pending": {name,args,call_id,messages,remaining_calls}}
+    """
+    llm = make_llm(MISTRAL_KEY).bind_tools(TOOLS_SCHEMA)
     messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_msg)]
-    response = llm.invoke(messages)
-    if response.tool_calls:
-        tc = response.tool_calls[0]
-        return {"type": "tool_request", "name": tc["name"], "args": tc["args"],
-                "call_id": tc["id"], "messages": messages + [response]}
-    return {"type": "final", "content": response.content}
+    tool_log = []
+
+    # agentic loop — max 5 rounds to be safe
+    for _ in range(5):
+        response = llm.invoke(messages)
+        messages.append(response)
+
+        if not response.tool_calls:
+            # no more tool calls — done
+            return {"type": "final", "content": response.content, "tool_log": tool_log}
+
+        if approval_mode:
+            # pause at the FIRST tool call, queue the rest
+            first = response.tool_calls[0]
+            remaining = response.tool_calls[1:]
+            return {
+                "type": "needs_approval",
+                "pending": {
+                    "name": first["name"],
+                    "args": first["args"],
+                    "call_id": first["id"],
+                    "messages": messages,          # includes the assistant response
+                    "remaining_calls": remaining,  # other calls from same response
+                }
+            }
+
+        # auto mode — execute ALL tool calls in this round, add all ToolMessages
+        for tc in response.tool_calls:
+            result = execute_tool(tc["name"], tc["args"])
+            tool_log.append(f"[{tc['name']}] city={tc['args'].get('city','')} → executed")
+            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+        # continue loop to get next LLM response
+
+    return {"type": "final", "content": "Reached max tool call rounds.", "tool_log": tool_log}
 
 
-def agent_with_result(messages, tool_call_id: str, tool_result: str, mistral_key: str) -> str:
-    llm = make_llm(mistral_key).bind_tools(TOOLS_SCHEMA)
-    msgs = messages + [ToolMessage(content=tool_result, tool_call_id=tool_call_id)]
-    return llm.invoke(msgs).content
+def resume_after_approval(messages: list, approved_call_id: str, approved_result: str,
+                           remaining_calls: list, approval_mode: bool):
+    """
+    After user approves one tool call:
+    1. Append the ToolMessage for the approved call.
+    2. If there are more tool calls from the SAME assistant response, handle them too
+       (auto-execute in auto mode, or queue the next one for approval).
+    3. Then continue the agentic loop.
+    """
+    llm = make_llm(MISTRAL_KEY).bind_tools(TOOLS_SCHEMA)
+    tool_log = []
+
+    # Add approved result
+    messages = messages + [ToolMessage(content=approved_result, tool_call_id=approved_call_id)]
+
+    # Handle remaining calls from the same assistant turn
+    if remaining_calls:
+        if approval_mode:
+            # Queue next one for approval
+            first = remaining_calls[0]
+            rest  = remaining_calls[1:]
+            return {
+                "type": "needs_approval",
+                "pending": {
+                    "name": first["name"],
+                    "args": first["args"],
+                    "call_id": first["id"],
+                    "messages": messages,
+                    "remaining_calls": rest,
+                }
+            }
+        else:
+            # Auto-execute all remaining
+            for tc in remaining_calls:
+                result = execute_tool(tc["name"], tc["args"])
+                tool_log.append(f"[{tc['name']}] city={tc['args'].get('city','')} → auto")
+                messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+
+    # Continue agentic loop
+    for _ in range(5):
+        response = llm.invoke(messages)
+        messages.append(response)
+
+        if not response.tool_calls:
+            return {"type": "final", "content": response.content, "tool_log": tool_log}
+
+        if approval_mode:
+            first = response.tool_calls[0]
+            remaining = response.tool_calls[1:]
+            return {
+                "type": "needs_approval",
+                "pending": {
+                    "name": first["name"],
+                    "args": first["args"],
+                    "call_id": first["id"],
+                    "messages": messages,
+                    "remaining_calls": remaining,
+                }
+            }
+
+        for tc in response.tool_calls:
+            result = execute_tool(tc["name"], tc["args"])
+            tool_log.append(f"[{tc['name']}] city={tc['args'].get('city','')} → auto")
+            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+
+    return {"type": "final", "content": "Reached max tool call rounds.", "tool_log": tool_log}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -716,9 +825,11 @@ st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 # ── APPROVAL BANNER ─────────────────────────────────────────
 if st.session_state.pending_tool is not None:
     pt = st.session_state.pending_tool
+    remaining_count = len(pt.get("remaining_calls", []))
+    more_text = f"  (+{remaining_count} more queued)" if remaining_count else ""
     st.markdown(f"""
     <div class='approval-card'>
-      <div class='approval-label'>⚡ Tool Call — Awaiting Approval</div>
+      <div class='approval-label'>⚡ Tool Call — Awaiting Approval{more_text}</div>
       <div class='approval-tool'>🛠 {pt['name']}</div>
       <div class='approval-args'>args → {json.dumps(pt['args'])}</div>
     </div>
@@ -729,15 +840,21 @@ if st.session_state.pending_tool is not None:
         st.markdown('<div class="approve-wrap">', unsafe_allow_html=True)
         if st.button("✅ Approve", key="approve_btn", use_container_width=True):
             city = pt["args"].get("city", "")
-            if pt["name"] == "get_weather":
-                tool_result = get_weather_data(city, WEATHER_KEY)
-            else:
-                tool_result = get_news_data(city, TAVILY_KEY)
+            tool_result = execute_tool(pt["name"], pt["args"])
             st.session_state.tool_calls_made += 1
-            final = agent_with_result(pt["messages"], pt["call_id"], tool_result, MISTRAL_KEY)
-            st.session_state.chat_history.append({"role": "tool",      "content": f"Tool [{pt['name']}] executed for city: {city}"})
-            st.session_state.chat_history.append({"role": "assistant", "content": final})
-            st.session_state.pending_tool = None
+            st.session_state.chat_history.append({"role": "tool", "content": f"Tool [{pt['name']}] executed for city: {city}"})
+            outcome = resume_after_approval(
+                pt["messages"], pt["call_id"], tool_result,
+                pt.get("remaining_calls", []),
+                st.session_state.approval_mode
+            )
+            if outcome["type"] == "needs_approval":
+                st.session_state.pending_tool = outcome["pending"]
+            else:
+                for log in outcome.get("tool_log", []):
+                    st.session_state.chat_history.append({"role": "tool", "content": log})
+                st.session_state.chat_history.append({"role": "assistant", "content": outcome["content"]})
+                st.session_state.pending_tool = None
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with a2:
@@ -792,32 +909,15 @@ if send and user_input.strip():
 
         with st.spinner("Thinking..."):
             try:
-                result = agent_first_step(user_input.strip(), MISTRAL_KEY)
+                outcome = run_full_agent(user_input.strip(), st.session_state.approval_mode)
             except Exception as e:
-                result = {"type": "final", "content": f"Agent error: {e}"}
+                outcome = {"type": "final", "content": f"Agent error: {e}", "tool_log": []}
 
-        if result["type"] == "tool_request":
-            if st.session_state.approval_mode:
-                st.session_state.pending_tool = {
-                    "name":     result["name"],
-                    "args":     result["args"],
-                    "call_id":  result["call_id"],
-                    "messages": result["messages"],
-                }
-            else:
-                city = result["args"].get("city", "")
-                if result["name"] == "get_weather":
-                    tool_result = get_weather_data(city, WEATHER_KEY)
-                else:
-                    tool_result = get_news_data(city, TAVILY_KEY)
-                st.session_state.tool_calls_made += 1
-                try:
-                    final = agent_with_result(result["messages"], result["call_id"], tool_result, MISTRAL_KEY)
-                except Exception as e:
-                    final = f"Error generating response: {e}"
-                st.session_state.chat_history.append({"role": "tool",      "content": f"Tool [{result['name']}] → city: {city}"})
-                st.session_state.chat_history.append({"role": "assistant", "content": final})
+        if outcome["type"] == "needs_approval":
+            st.session_state.pending_tool = outcome["pending"]
         else:
-            st.session_state.chat_history.append({"role": "assistant", "content": result["content"]})
+            for log in outcome.get("tool_log", []):
+                st.session_state.chat_history.append({"role": "tool", "content": log})
+            st.session_state.chat_history.append({"role": "assistant", "content": outcome["content"]})
 
         st.rerun()
