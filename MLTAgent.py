@@ -533,14 +533,20 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("#### 🔑 API Configuration")
 
+    def get_secret(key):
+        try:
+            return st.secrets.get(key, "") or os.environ.get(key, "")
+        except Exception:
+            return os.environ.get(key, "")
+
     mistral_key = st.text_input("Mistral API Key", type="password",
-                                value=st.secrets.get("MISTRAL_API_KEY", ""),
+                                value=get_secret("MISTRAL_API_KEY"),
                                 placeholder="Enter Mistral key...")
     weather_key = st.text_input("OpenWeather API Key", type="password",
-                                value=st.secrets.get("OPENWEATHER_API_KEY", ""),
+                                value=get_secret("OPENWEATHER_API_KEY"),
                                 placeholder="Enter OpenWeather key...")
     tavily_key  = st.text_input("Tavily Search API Key", type="password",
-                                value=st.secrets.get("TAVILY_API_KEY", ""),
+                                value=get_secret("TAVILY_API_KEY"),
                                 placeholder="Enter Tavily key...")
 
     st.markdown("---")
