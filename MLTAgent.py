@@ -596,7 +596,7 @@ SYSTEM_PROMPT = (
 
 def make_llm(key: str):
     # Updated the model string to one of Groq's stable/active models
-    return ChatGroq(model="llama-3.3-70b-versatile", api_key=key)
+    return ChatGroq(model="qwen/qwen3.8-27b", api_key=key)
 
 
 def execute_tool(name: str, args: dict) -> str:
