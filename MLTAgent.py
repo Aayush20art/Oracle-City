@@ -28,7 +28,7 @@ for key, default in {
         st.session_state[key] = default
 
 # ── LOAD API KEYS FROM STREAMLIT SECRETS ──
-MISTRAL_KEY = st.secrets["MISTRAL_API_KEY"]
+GROQ_KEY = st.secrets["GROQ_API_KEY"]
 WEATHER_KEY = st.secrets["OPENWEATHER_API_KEY"]
 TAVILY_KEY  = st.secrets["TAVILY_API_KEY"]
 
@@ -500,7 +500,7 @@ div[data-testid="column"]:last-child .stButton > button:hover {
 #  LAZY IMPORTS (only after page config)
 # ──────────────────────────────────────────────────────────────
 try:
-    from langchain_mistralai import ChatMistralAI
+    from langchain_groq import ChatGroq
     from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
     from langchain_community.tools import TavilySearchResults
     IMPORTS_OK = True
@@ -595,7 +595,7 @@ SYSTEM_PROMPT = (
 
 
 def make_llm(key: str):
-    return ChatMistralAI(model="mistral-small-2506", api_key=key)
+    return ChatGroq(model="llama-3.1-8b-instant", api_key=key)
 
 
 def execute_tool(name: str, args: dict) -> str:
@@ -618,7 +618,7 @@ def run_full_agent(user_msg: str, approval_mode: bool):
       "final"        -> {"type":"final", "content": str, "tool_log": [...]}
       "needs_approval" -> {"type":"needs_approval", "pending": {name,args,call_id,messages,remaining_calls}}
     """
-    llm = make_llm(MISTRAL_KEY).bind_tools(TOOLS_SCHEMA)
+    llm = make_llm(GROQ_KEY).bind_tools(TOOLS_SCHEMA)
     messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_msg)]
     tool_log = []
 
@@ -665,7 +665,7 @@ def resume_after_approval(messages: list, approved_call_id: str, approved_result
        (auto-execute in auto mode, or queue the next one for approval).
     3. Then continue the agentic loop.
     """
-    llm = make_llm(MISTRAL_KEY).bind_tools(TOOLS_SCHEMA)
+    llm = make_llm(GROQ_KEY).bind_tools(TOOLS_SCHEMA)
     tool_log = []
 
     # Add approved result
@@ -777,7 +777,7 @@ st.markdown("""
 <div class='hero-wrap'>
   <div class='hero-eyebrow'>▸ Real-Time City Intelligence</div>
   <div class='hero-title'>Aura<span>City</span></div>
-  <div class='hero-sub'>Weather · News · Powered by Mistral AI</div>
+  <div class='hero-sub'>Weather · News · Powered by Groq AI</div>
 </div>
 <div class='neon-divider'></div>
 """, unsafe_allow_html=True)
@@ -902,7 +902,7 @@ with st.expander("💡  Example prompts"):
 # ── PROCESS SEND ─────────────────────────────────────────────
 if send and user_input.strip():
     if not IMPORTS_OK:
-        st.error(f"Missing dependency: {IMPORT_ERROR}. Run: pip install langchain langchain-mistralai langchain-community")
+        st.error(f"Missing dependency: {IMPORT_ERROR}. Run: pip install langchain langchain-groq langchain-community")
     else:
         st.session_state.chat_history.append({"role": "user", "content": user_input.strip()})
         st.session_state.total_queries += 1
