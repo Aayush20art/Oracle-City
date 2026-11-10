@@ -1,6 +1,6 @@
 # 🌆 Oracle City AI
 
-Oracle City AI is an intelligent city assistant built using streamlit, Mistral AI, OpenWeather API, and Tavily Search. It provides real-time weather updates and the latest city news through an agentic AI workflow with optional human-in-the-loop approval for tool execution.
+Oracle City AI is an intelligent city assistant built using Streamlit, Mistral AI, OpenWeather API, and Tavily Search. It provides real-time weather updates and the latest city news through an agentic AI workflow with optional human-in-the-loop approval for tool execution.
 
 ## 🚀 Live Demo
 
