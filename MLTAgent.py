@@ -33,7 +33,7 @@ WEATHER_KEY = st.secrets["OPENWEATHER_API_KEY"]
 TAVILY_KEY  = st.secrets["TAVILY_API_KEY"]
 
 # ──────────────────────────────────────────────────────────────
-#  FULL CSS — Cyberpunk Neon City theme
+#  FULL CSS — Cyberpunk Neon City Theme
 # ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
